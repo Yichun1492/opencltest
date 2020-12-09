@@ -1,16 +1,26 @@
-cmake_minimum_required(VERSION 3.14)
-project("opencltest")
-add_definitions(-std=c++11)
-set(EXECUTABLE_OUTPUT_PATH "${CMAKE_CURRENT_LIST_DIR}/")
-include_directories("/usr/local/cuda-10.0/include/")
-find_package(OpenCL REQUIRED)
-INCLUDE_DIRECTORIES(${OpenCL_INCLUDE_DIRS})
-#LINK_DIRECTORIES(${OpenCL_LIBRARY})
-message(STATUS "OpenCL found: ${OPENCL_FOUND}")
-message(STATUS "OpenCL includes: ${OPENCL_INCLUDE_DIRS}")
-message(STATUS "OpenCL CXX includes: ${OPENCL_HAS_CPP_BINDINGS}")
-message(STATUS "OpenCL libraries: ${OPENCL_LIBRARIES}")
-#target_link_libraries(cpl OpenCL)
-set(CMAKE_CXX_FLAG "${CMAKE_CXX_FLAGS} -g")
-add_executable(opencltest "${CMAKE_CURRENT_LIST_DIR}/src/opencltest.cpp")
-target_link_libraries(opencltest OpenCL)
+cmake_minimum_required(VERSION 3.0.0)
+
+# set up envs
+set(OpenCL_INCLUDE_DIRS "${CMAKE_CURRENT_LIST_DIR}/external/qualcomm_ocl/include")
+set(OpenCL_LIBRARIES "${CMAKE_CURRENT_LIST_DIR}/external/qualcomm_ocl/lib/libOpenCL.so")
+#include_directories("/home/andyyc_chen/code/android_thirdparty/OpenCL/")
+#LINK_DIRECTORIES("/home/andyyc_chen/code/android_thirdparty/OpenCL/libs/arm64-v8a/")
+#find_path(OpenCL_INCLUDE_DIRS NAMES "CL/cl.h" PATHS external/qualcomm_ocl/include NO_DEFAULT_PATH)
+#find_library(OpenCL_LIBRARIES NAMES OpenCL PATHS external/qualcomm_ocl/lib)
+file(GLOB libc_LIBRARIES external/libc++/lib/*.so)
+#message(${libc_LIBRARIES})
+
+# compile
+add_executable(test_main src/main.cpp)
+target_include_directories(test_main PRIVATE ${OpenCL_INCLUDE_DIRS})
+target_link_libraries(test_main PRIVATE ${OpenCL_LIBRARIES} ${libc_LIBRARIES})
+
+# export
+install(
+    TARGETS test_main
+    EXPORT test_main-targets
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+    INCLUDES DESTINATION include
+)
