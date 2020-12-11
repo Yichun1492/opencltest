@@ -9,11 +9,11 @@ set(OpenCL_LIBRARIES "${CMAKE_CURRENT_LIST_DIR}/external/qualcomm_ocl/lib/libOpe
 #find_library(OpenCL_LIBRARIES NAMES OpenCL PATHS external/qualcomm_ocl/lib)
 file(GLOB libc_LIBRARIES external/libc++/lib/*.so)
 #message(${libc_LIBRARIES})
-
+find_package(OpenCV REQUIRED)
 # compile
 add_executable(test_main src/main.cpp)
 target_include_directories(test_main PRIVATE ${OpenCL_INCLUDE_DIRS})
-target_link_libraries(test_main PRIVATE ${OpenCL_LIBRARIES} ${libc_LIBRARIES})
+target_link_libraries(test_main PRIVATE ${OpenCL_LIBRARIES} ${libc_LIBRARIES} ${OpenCV_LIBS})
 
 # export
 install(

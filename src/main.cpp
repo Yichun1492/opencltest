@@ -14,7 +14,7 @@ http://www.kimicat.com/opencl-1/opencl-jiao-xue-yi#TOC-OpenCL-3
 #include <fstream>
 #include <vector>
 #include <chrono>
-
+#include <opencv2/opencv.hpp>
 //要編譯kernel 程式，首先要把檔案內容讀進來，再使用 clCreateProgramWithSource 這個函式，然後再使用 clBuildProgram 編譯。如下所示
 cl_program load_program(cl_context context, const char* filename);
 
@@ -78,6 +78,13 @@ int main(void) {
     clGetDeviceInfo(devices[0], CL_DEVICE_NAME, cb, &devname[0], 0);
     std::cout << "Device: " << devname.c_str() << "\n"; //Device: QUALCOMM Adreno(TM)
 
+    cl_uint compute_unit;
+    clGetDeviceInfo(devices[0], CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_unit, 0);
+    std::cout << "compute_unit: " << compute_unit << std::endl;
+
+    cl_uint max_work_group_size;
+    clGetDeviceInfo(devices[0], CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(cl_uint), &max_work_group_size, 0);
+    std::cout << "max_work_group_size: " << max_work_group_size << std::endl;
     /*
     建立command queue
     大部份 OpenCL 的操作，都要透過 command queue。Command queue 可以接收對一個 OpenCL 裝置的各種操作，並按照順序執行（OpenCL 也容許把一個 command queue 指定成不照順序執行，即 out-of-order execution
@@ -92,13 +99,28 @@ int main(void) {
     std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
     unsigned long time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(end_time-beg_time).count();
     std::cout<<"opencl initial time cost : " <<time_cost <<std::endl;
+    
     //產生一些「測試資料」
-    const int DATA_SIZE = 1048576;
-    std::vector<float> a(DATA_SIZE), b(DATA_SIZE), res(DATA_SIZE);
-    for(int i = 0; i < DATA_SIZE; i++) {
-        a[i] = std::rand();
-        b[i] = std::rand();
+    std::ifstream data_file;
+    data_file.open("./single/sunrgbd_val000003_321X241_0.000000.txt", std::ios::in | std::ios::binary);
+    std::vector<float>descriptorsValues;
+    const size_t outputtensor_size = 1701942 ; //321*241*22
+    descriptorsValues.resize(outputtensor_size);
+    data_file.read(reinterpret_cast<char*>(&descriptorsValues[0]), outputtensor_size*sizeof(float));
+    data_file.close();
+    for(int i = 0 ; i< 22 ; i++)
+    {
+        std::cout << descriptorsValues[i] << " ";
     }
+    std::cout<<std::endl;
+    //cv::Mat res(cv::Size(321,233),CV_8UC1, cv::Scalar(0));
+    cv::Mat res = cv::Mat::zeros(cv::Size(321,233),CV_8UC1);
+    // const int DATA_SIZE = 1048576;
+    // std::vector<float> a(DATA_SIZE), b(DATA_SIZE), res(DATA_SIZE);
+    // for(int i = 0; i < DATA_SIZE; i++) {
+    //     a[i] = std::rand();
+    //     b[i] = std::rand();
+    // }
     
     /*
     配置記憶體並複製資料
@@ -117,29 +139,27 @@ int main(void) {
     如果 clCreateBuffer 因為某些原因無法配置記憶體（例如 OpenCL 裝置上的記憶體不夠），則會傳回 0。要釋放配置的記憶體，可以使用 clReleaseMemObject 函式。
     */
     beg_time = std::chrono::steady_clock::now();
-    cl_mem cl_a = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(cl_float) * DATA_SIZE, &a[0], NULL);
-    cl_mem cl_b = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(cl_float) * DATA_SIZE, &b[0], NULL);
-    cl_mem cl_res = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(cl_float) * DATA_SIZE, NULL, NULL);
-    if(cl_a == 0 || cl_b == 0 || cl_res == 0) {
+    cl_mem cl_a = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(cl_float) * outputtensor_size, &descriptorsValues[0], NULL);
+    cl_mem cl_res = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(cl_uchar) * 233*321, NULL, NULL);
+    if(cl_a == 0 || cl_res == 0) {
         std::cerr << "Can't create OpenCL buffer\n";
         clReleaseMemObject(cl_a);
-        clReleaseMemObject(cl_b);
         clReleaseMemObject(cl_res);
         clReleaseCommandQueue(queue);
         clReleaseContext(context);
         return 0;
     }
+    
     end_time = std::chrono::steady_clock::now();
     time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(end_time-beg_time).count();
     std::cout<<"memory copy time cost: " << time_cost << std::endl; 
-
+    
     //
     beg_time = std::chrono::steady_clock::now();
-    cl_program program = load_program(context, "shader.cl");
+    cl_program program = load_program(context, "extractMaxProbClass.cl");
     if(program == 0) {
         std::cerr << "Can't load or build program\n";
         clReleaseMemObject(cl_a);
-        clReleaseMemObject(cl_b);
         clReleaseMemObject(cl_res);
         clReleaseCommandQueue(queue);
         clReleaseContext(context);
@@ -149,12 +169,11 @@ int main(void) {
     /*
     一個 OpenCL kernel 程式裡面可以有很多個函式。因此，還要取得程式中函式的進入點：
     */
-    cl_kernel adder = clCreateKernel(program, "adder", 0);
-    if(adder == 0) {
+    cl_kernel extractMaxProbClass = clCreateKernel(program, "extractMaxProbClass", 0);
+    if(extractMaxProbClass == 0) {
         std::cerr << "Can't load kernel\n";
         clReleaseProgram(program);
         clReleaseMemObject(cl_a);
-        clReleaseMemObject(cl_b);
         clReleaseMemObject(cl_res);
         clReleaseCommandQueue(queue);
         clReleaseContext(context);
@@ -167,64 +186,69 @@ int main(void) {
     要執行 kernel 程式，只需要先設定好函式的參數。adder 函式有三個參數要設定：
     設定參數是使用 clSetKernelArg 函式。它的參數很簡單：第一個參數是要設定的 kernel object，第二個是參數的編號（從 0 開始），第三個參數是要設定的參數的大小，第四個參數則是實際上要設定的參數內部。以這裡的 adder 函式來說，三個參數都是指向 memory object 的指標。
     */
-    clSetKernelArg(adder, 0, sizeof(cl_mem), &cl_a);
-    clSetKernelArg(adder, 1, sizeof(cl_mem), &cl_b);
-    clSetKernelArg(adder, 2, sizeof(cl_mem), &cl_res);
+    clSetKernelArg(extractMaxProbClass, 0, sizeof(cl_mem), &cl_a);
+    clSetKernelArg(extractMaxProbClass, 1, sizeof(cl_mem), &cl_res);
     end_time = std::chrono::steady_clock::now();
     time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(end_time-beg_time).count();
     std::cout<<"load program time cost: " << time_cost << std::endl; 
 
     //設定好參數後，就可以開始執行了
     beg_time = std::chrono::steady_clock::now();
-    size_t work_size = DATA_SIZE;
+    size_t global_work_size[2] = { 321, 241 };
     //clEnqueueNDRangeKernel 會把執行一個 kernel 的動作加到 command queue 裡面。第三個參數（1）是指定 work item 數目的維度，在這裡就是一維。第五個參數是指定 work item 的總數目，也就是 DATA_SIZE。後面的參數現在暫時先不用管。
-    err = clEnqueueNDRangeKernel(queue, adder, 1, 0, &work_size, 0, 0, 0, 0);
+    err = clEnqueueNDRangeKernel(queue, extractMaxProbClass, 2, 0, global_work_size, 0, 0, 0, 0);
     //由於執行的結果是在 OpenCL 裝置的記憶體中，所以要取得結果，需要把它的內容複製到 CPU 能存取的主記憶體中
     /*
     clEnqueueReadBuffer 函式會把「將記憶體資料從 OpenCL 裝置複製到主記憶體」的動作加到 command queue 中。第三個參數表示是否要等待複製的動作完成才傳回，CL_TRUE 表示要等待。第五個參數是要複製的資料大小，第六個參數則是目標的位址。
     由於這裡指定要等待複製動作完成，所以當函式傳回時，資料已經完全複製完成了。最後是進行驗證，確定資料正確：
     */
     if(err == CL_SUCCESS) {
-        err = clEnqueueReadBuffer(queue, cl_res, CL_TRUE, 0, sizeof(float) * DATA_SIZE, &res[0], 0, 0, 0);
+        err = clEnqueueReadBuffer(queue, cl_res, CL_TRUE, 0, sizeof(cl_uchar) * 321*233, res.data, 0, 0, 0);
     }
     end_time = std::chrono::steady_clock::now();
     time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(end_time-beg_time).count();
     std::cout<<"execute and get result time cost: " << time_cost << std::endl; 
+    cv::imwrite("./single/sunrgbd_val000003_321X241_0.000000.png", res);
     
-    
-    //驗證正確性
-    beg_time = std::chrono::steady_clock::now();
-    if(err == CL_SUCCESS) {
-        bool correct = true;
-        for(int i = 0; i < DATA_SIZE; i++) {
-            if(a[i] + b[i] != res[i]) {
-            correct = false;
-            break;
-            }
-        }
-
-        if(correct) {
-            std::cout << "Data is correct\n";
-        }
-        else {
-            std::cout << "Data is incorrect\n";
-        }
-    }
-    else {
-        std::cerr << "Can't run kernel or read back data\n";
-    }
-    end_time = std::chrono::steady_clock::now();
-    time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(end_time-beg_time).count();
-    std::cout<<"cpu time cost: " << time_cost << std::endl; 
-
-    clReleaseKernel(adder);
+    clReleaseKernel(extractMaxProbClass);
     clReleaseProgram(program);
     clReleaseMemObject(cl_a);
-    clReleaseMemObject(cl_b);
     clReleaseMemObject(cl_res);
     clReleaseCommandQueue(queue);
     clReleaseContext(context);
     
+        //驗證正確性
+    beg_time = std::chrono::steady_clock::now();
+    int class_table[22] = {0,1,0,2,3,4,5,6,7,0,8,9,10,11,12,255,0,13,14,0,15,16};
+    cv::Mat m_imLabelMap = cv::Mat::zeros(cv::Size(321,233),CV_8UC1);
+    for(int row  = 0; row < 241 ; row++)
+    {
+        for(int col = 0 ; col < 321 ; col++)
+        {
+            if((row < 233) && (col < 321))
+            {
+                float max_prob =0.0;
+                int max_index = 0;
+                for(int channel = 0; channel < 22 ; channel++)
+                {
+                    if (descriptorsValues[(row*321+col)*22+channel] > max_prob)
+                    {
+                        max_prob = descriptorsValues[(row*321+col)*22+channel];
+                        max_index = class_table[channel];
+                    }
+                }
+                //std::cout<< row <<" " << col << std::endl;
+                //LabelMap[(row*321+col)*22] = max_index;
+                m_imLabelMap.at<uchar>(row,col) = max_index;
+            }
+            
+            
+        }
+    }
+    cv::resize(m_imLabelMap, m_imLabelMap , cv::Size(321,241),0,0,cv::INTER_NEAREST);
+    end_time = std::chrono::steady_clock::now();
+    time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(end_time-beg_time).count();
+    std::cout<<"cpu time cost: " << time_cost << std::endl; 
 
     // std::ifstream data_file;
     // data_file.open("./single/sunrgbd_val000003_321X241_0.000000.txt", std::ios::in | std::ios::binary);
@@ -333,5 +357,15 @@ load program time cost: 40
 execute and get result time cost: 3
 Data is correct
 cpu time cost: 8
+
+                           
+Device: QUALCOMM Adreno(TM)
+compute_unit: 2
+max_work_group_size: 0
+opencl initial time cost : 26
+memory copy time cost: 4
+load program time cost: 53
+execute and get result time cost: 2
+cpu time cost: 9
 
 */
